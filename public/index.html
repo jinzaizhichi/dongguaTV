@@ -18,10 +18,10 @@
     <link href="libs/css/animate.min.css" rel="stylesheet">
     <link rel="stylesheet" href="libs/css/fontawesome.min.css">
 
-    <script src="libs/js/hls.min.js"></script>
-    <script src="libs/js/DPlayer.min.js"></script>
-    <script src="libs/js/vue.global.prod.min.js"></script>
-    <script src="libs/js/bootstrap.bundle.min.js"></script>
+    <script data-cfasync="false" src="libs/js/hls.min.js"></script>
+    <script data-cfasync="false" src="libs/js/DPlayer.min.js"></script>
+    <script data-cfasync="false" src="libs/js/vue.global.prod.min.js"></script>
+    <script data-cfasync="false" src="libs/js/bootstrap.bundle.min.js"></script>
 
     <style>
         :root {
@@ -393,6 +393,8 @@
         .section-container {
             padding: 0 5%;
             margin-bottom: 40px;
+            min-height: 100px;
+            /* 确保 Intersection Observer 能检测到进入视口 */
         }
 
         .section-header {
@@ -1462,7 +1464,7 @@
                         <div class="hot-card" v-for="item in getPagedItems(key)" :key="'grid-' + item.id"
                             @click="autoSearch(item.title || item.name)">
                             <div class="poster-wrap">
-                                <img <img :src="getPosterUrl(item.poster_path)">
+                                <img :src="getPosterUrl(item.poster_path)">
                                 <div class="rating-badge"><i class="fas fa-star text-warning"></i> {{ item.vote_average
                                     ? item.vote_average.toFixed(1) : 'N/A' }}</div>
                             </div>
@@ -1721,7 +1723,7 @@
     </div>
 
     <!-- Password Verification Script (runs before Vue) -->
-    <script>
+    <script data-cfasync="false">
         // SHA256 Hash Function (Pure JS implementation)
         async function sha256(message) {
             const msgBuffer = new TextEncoder().encode(message);
@@ -1901,7 +1903,7 @@
         });
     </script>
 
-    <script>
+    <script data-cfasync="false">
         const { createApp, reactive } = Vue;
         // TMDb API 配置 (从服务端获取)
         let TMDB_API_KEY = "";
@@ -2354,12 +2356,35 @@
                         .catch(err => console.error(`Fetch error for ${key}:`, err));
                 },
 
-                // 初始化榜单 (懒加载模式)
+                // 初始化榜单 (懒加载模式 - 移动端直接顺序加载)
                 fetchAllLists() {
                     const keys = Object.keys(this.rowConfigs);
-                    const EAGER_LOAD_COUNT = 2; // 立即加载前2个榜单
 
-                    // 1. 立即加载前2个榜单（电影榜、剧集榜）
+                    // 更可靠的移动端检测（多种方法）
+                    const viewportWidth = window.innerWidth;
+                    const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+                    const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                    const isMobile = viewportWidth < 768 || (isTouchDevice && viewportWidth < 1024) || isMobileUA;
+
+                    console.log(`[设备检测] 宽度=${viewportWidth}, 触摸=${isTouchDevice}, UA移动=${isMobileUA}, 判定=${isMobile ? '移动端' : '桌面端'}`);
+
+                    // 移动端：直接顺序加载所有榜单（Intersection Observer 不可靠）
+                    if (isMobile) {
+                        console.log(`[移动端] 直接加载所有 ${keys.length} 个榜单`);
+                        keys.forEach((key, index) => {
+                            // 每个榜单间隔 300ms 加载，避免 API 速率限制
+                            setTimeout(() => {
+                                console.log(`[移动端] 正在加载: ${key}`);
+                                this.fetchRow(key);
+                            }, index * 300);
+                        });
+                        return;
+                    }
+
+                    // 桌面端：使用 Intersection Observer 懒加载
+                    const EAGER_LOAD_COUNT = 2;
+
+                    // 1. 立即加载前 2 个榜单
                     keys.slice(0, EAGER_LOAD_COUNT).forEach((key, index) => {
                         setTimeout(() => {
                             this.fetchRow(key);
@@ -2374,27 +2399,23 @@
                         const observer = new IntersectionObserver((entries) => {
                             entries.forEach(entry => {
                                 if (entry.isIntersecting) {
-                                    // 从 data-key 获取榜单 key
                                     const key = entry.target.dataset.rowKey;
                                     if (key && !this.rowLists[key]) {
                                         console.log(`[懒加载] 加载榜单: ${key}`);
                                         this.fetchRow(key);
                                     }
-                                    // 加载后取消观察
                                     observer.unobserve(entry.target);
                                 }
                             });
                         }, {
-                            rootMargin: '200px 0px', // 提前 200px 开始加载
+                            rootMargin: '300px 0px',
                             threshold: 0.01
                         });
 
-                        // 为每个懒加载的榜单设置占位区域
+                        // 使用 querySelectorAll 获取所有榜单元素
                         lazyKeys.forEach(key => {
-                            const sectionRef = this.$refs[key + '-section'];
-                            const el = Array.isArray(sectionRef) ? sectionRef[0] : sectionRef;
+                            const el = document.querySelector(`[data-row-key="${key}"]`);
                             if (el) {
-                                el.dataset.rowKey = key;
                                 observer.observe(el);
                             }
                         });
@@ -2839,7 +2860,7 @@
     </script>
 
     <!-- Register Service Worker -->
-    <script>
+    <script data-cfasync="false">
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('./sw.js')

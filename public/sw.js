@@ -1,5 +1,6 @@
 // Service Worker with Image Caching for dongguaTV
-const CACHE_VERSION = 'v4';
+// v8: Fixed cross-origin (m3u8 video) request handling
+const CACHE_VERSION = 'v8';
 const STATIC_CACHE = 'donggua-static-' + CACHE_VERSION;
 const IMAGE_CACHE = 'donggua-images-' + CACHE_VERSION;
 
@@ -76,12 +77,17 @@ self.addEventListener('fetch', event => {
         return;
     }
 
-    // 策略3：其他请求 - Network First
+    // 策略3：只处理同源请求 - Network First
+    // 跳过跨域请求（如 m3u8 视频流），避免 CORS 错误
+    if (url.origin !== self.location.origin) {
+        return; // 让浏览器直接处理跨域请求
+    }
+
     event.respondWith(
         fetch(event.request)
             .then(response => {
-                // 只缓存同源请求
-                if (response && response.status === 200 && url.origin === self.location.origin) {
+                // 只缓存成功的同源请求
+                if (response && response.status === 200) {
                     const responseToCache = response.clone();
                     caches.open(STATIC_CACHE).then(cache => {
                         cache.put(event.request, responseToCache);
