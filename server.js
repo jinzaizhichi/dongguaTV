@@ -75,6 +75,92 @@ const PROXY_MEMORY_TTL = 24 * 60 * 60 * 1000; // 24小时后重新尝试直连
 const SLOW_THRESHOLD_MS = 1500; // 直连延迟超过此值视为慢速，尝试代理
 
 /**
+ * 检测字符串是否主要包含英文字符（用于判断是否需要翻译）
+ * @param {string} text - 待检测文本
+ * @returns {boolean} - 是否主要是英文
+ */
+function isMainlyEnglish(text) {
+    if (!text) return false;
+    // 去除空格和标点后检测
+    const cleaned = text.replace(/[\s\d\-\_\:\.\,\!\?\'\"\(\)\[\]]/g, '');
+    if (cleaned.length === 0) return false;
+
+    // 计算英文字母占比
+    const englishChars = (cleaned.match(/[a-zA-Z]/g) || []).length;
+    const ratio = englishChars / cleaned.length;
+
+    // 如果英文字符占比超过 70%，认为是英文
+    return ratio > 0.7;
+}
+
+/**
+ * 通过 TMDB 搜索获取影片的中文名称
+ * 利用 TMDB 的多语言支持，查询英文标题对应的中文翻译
+ * @param {string} englishTitle - 英文标题
+ * @returns {Promise<string[]>} - 找到的中文标题数组
+ */
+async function fetchChineseTitleFromTMDB(englishTitle) {
+    const TMDB_API_KEY = process.env.TMDB_API_KEY;
+    if (!TMDB_API_KEY) return [];
+
+    try {
+        // 先用英文搜索找到影片 ID
+        const searchUrl = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(englishTitle)}&language=en-US`;
+        const searchResponse = await axios.get(searchUrl, { timeout: 5000 });
+
+        if (!searchResponse.data.results || searchResponse.data.results.length === 0) {
+            return [];
+        }
+
+        const firstResult = searchResponse.data.results[0];
+        const mediaType = firstResult.media_type;  // movie 或 tv
+        const id = firstResult.id;
+
+        if (!id || (mediaType !== 'movie' && mediaType !== 'tv')) {
+            return [];
+        }
+
+        // 用中文语言获取详情，TMDB 会返回中文标题
+        const detailUrl = `https://api.themoviedb.org/3/${mediaType}/${id}?api_key=${TMDB_API_KEY}&language=zh-CN`;
+        const detailResponse = await axios.get(detailUrl, { timeout: 5000 });
+
+        const chineseTitles = [];
+        const chineseTitle = detailResponse.data.title || detailResponse.data.name;
+
+        if (chineseTitle && chineseTitle !== englishTitle) {
+            chineseTitles.push(chineseTitle);
+            console.log(`[TMDB Translation] "${englishTitle}" => "${chineseTitle}"`);
+        }
+
+        // 尝试获取更多别名（alternative_titles）
+        try {
+            const altUrl = `https://api.themoviedb.org/3/${mediaType}/${id}/alternative_titles?api_key=${TMDB_API_KEY}`;
+            const altResponse = await axios.get(altUrl, { timeout: 3000 });
+
+            // 电影用 titles，电视剧用 results
+            const alternatives = altResponse.data.titles || altResponse.data.results || [];
+
+            // 查找中文地区的别名 (CN, TW, HK)
+            for (const alt of alternatives) {
+                const country = alt.iso_3166_1;
+                if (['CN', 'TW', 'HK'].includes(country) && alt.title) {
+                    if (!chineseTitles.includes(alt.title) && alt.title !== englishTitle) {
+                        chineseTitles.push(alt.title);
+                    }
+                }
+            }
+        } catch (e) {
+            // 别名获取失败不影响主流程
+        }
+
+        return chineseTitles;
+    } catch (error) {
+        console.error(`[TMDB Translation Error] ${englishTitle}:`, error.message);
+        return [];
+    }
+}
+
+/**
  * 智能生成搜索关键词变体
  * 用于提高搜索命中率，解决 TMDB 标题与资源站标题不匹配的问题
  * 例如："利刃出鞘3：亡者归来" -> ["利刃出鞘3：亡者归来", "利刃出鞘3", "利刃出鞘"]
@@ -770,9 +856,26 @@ app.get('/api/search', async (req, res) => {
     res.setHeader('X-Accel-Buffering', 'no'); // 禁用 Nginx 缓冲
 
     // 生成搜索关键词变体
-    const searchKeywords = smartSearch
+    let searchKeywords = smartSearch
         ? generateSearchKeywords(keyword, originalTitle)
         : [keyword];
+
+    // 智能翻译：如果关键词是英文，尝试通过 TMDB 获取中文名
+    if (smartSearch && isMainlyEnglish(keyword)) {
+        console.log(`[Smart Search] 检测到英文关键词，尝试获取中文翻译: ${keyword}`);
+        const chineseTitles = await fetchChineseTitleFromTMDB(keyword);
+        if (chineseTitles.length > 0) {
+            // 将中文标题加入搜索列表，并对中文标题也生成变体
+            for (const cn of chineseTitles) {
+                const cnVariants = generateSearchKeywords(cn);
+                for (const v of cnVariants) {
+                    if (!searchKeywords.includes(v)) {
+                        searchKeywords.push(v);
+                    }
+                }
+            }
+        }
+    }
 
     if (searchKeywords.length > 1) {
         console.log(`[Smart Search] 生成关键词变体: ${searchKeywords.join(' | ')}`);
