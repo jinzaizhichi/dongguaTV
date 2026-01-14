@@ -4159,7 +4159,8 @@
                                 vod_content: s.vod_content || '',  // 剧情介绍
                                 site_name: s.site_name,
                                 site_key: s.site_key || (s.site_name + '_' + idx),  // 用于匹配高亮
-                                latency: s.latency || 500  // 默认延迟
+                                latency: s.latency || 500,  // 默认延迟
+                                _testType: s._testType || null  // 保存测速类型: direct/proxy/server
                             }))
                         } : null
                     };
@@ -4350,10 +4351,23 @@
                         // 设置 rawList（用于显示资源站列表和允许切换）
                         this.rawList = sourcesWithKey;
 
-                        // 获取最佳资源
-                        const bestSourceIdx = sourcesWithKey.findIndex(s => s.latency && s.latency < 1000);
-                        const bestSource = bestSourceIdx >= 0 ? sourcesWithKey[bestSourceIdx] : sourcesWithKey[0];
-                        console.log('[观看历史] 选择资源站:', bestSource?.site_name, '延迟:', bestSource?.latency);
+                        // 获取最佳资源：优先选择直连测速(direct)的资源站，其次是代理(proxy)，最后才是服务器测速(server)
+                        // 1. 优先选择直连测速且延迟合理的资源
+                        let directSources = sourcesWithKey.filter(s => s._testType === 'direct' && s.latency && s.latency < 3000);
+                        // 2. 其次选择代理测速的资源
+                        let proxySources = sourcesWithKey.filter(s => s._testType === 'proxy' && s.latency && s.latency < 3000);
+                        // 3. 最后才考虑服务器测速或无类型的资源
+                        let otherSources = sourcesWithKey.filter(s => (!s._testType || s._testType === 'server') && s.latency && s.latency < 3000);
+
+                        // 按延迟排序
+                        directSources.sort((a, b) => a.latency - b.latency);
+                        proxySources.sort((a, b) => a.latency - b.latency);
+                        otherSources.sort((a, b) => a.latency - b.latency);
+
+                        // 选择最佳资源
+                        let bestSource = directSources[0] || proxySources[0] || otherSources[0] || sourcesWithKey[0];
+                        const testTypeLabel = bestSource?._testType === 'direct' ? '🎬直连' : (bestSource?._testType === 'proxy' ? '🔀代理' : '📡服务器');
+                        console.log('[观看历史] 选择资源站:', bestSource?.site_name, '延迟:', bestSource?.latency, '类型:', testTypeLabel);
 
                         // 设置 currentSource（使用相同的 site_key）
                         this.currentSource = bestSource;
